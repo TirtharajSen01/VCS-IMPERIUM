@@ -13,6 +13,37 @@ using namespace std;
 
 string root = "";
 
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// IMPERIUM INIT FUNCTION
+
+string checkDirType(string path)
+{
+    struct stat info;
+    if (!stat(path.c_str(), &info)) {
+        if (info.st_mode & S_IFDIR)
+            return "directory";
+        else if (info.st_mode & S_IFREG)
+            return "file";
+    }
+    return "\0";
+}
+
+bool initDone()
+{
+    if (checkDirType(root + "/.imperium") != "directory")
+        return false;
+    if (checkDirType(root + "/.imperium/add.log") != "file")
+        return false;
+    if (checkDirType(root + "/.imperium/commit.log") != "file")
+        return false;
+    if (checkDirType(root + "/.imperiumignore") != "file")
+        return false;
+    if (checkDirType(root + "/.imperium/conflict") != "file")
+        return false;
+    return true;
+}
+
 void init(string path)
 {
     struct stat info;
@@ -185,6 +216,128 @@ void add(string path)
     }
 }
 
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// IMPERIUM COMMIT FUNCTION
+
+string generateCommitHash()
+{
+    uint64_t timenow = time(nullptr);
+    unsigned char result[20]={};
+
+    SHA_CTX ctx = {};
+    SHA1_Init(&ctx);
+    SHA1_Update(&ctx, (const char*)&timenow, sizeof(timenow));
+    SHA1_Final(result, &ctx);
+
+    stringstream oss;
+    for (auto x = 0; x < 20; x++) {
+       oss << hex << setfill('0') << setw(2) << (unsigned int)(result[x]);
+    }
+    string commitHash = oss.str();
+    return commitHash;
+}
+
+map<string, int> allStaged;
+
+void generateAllStaged()
+{
+    for (auto &childdir : fs::recursive_directory_iterator(root + "/.imperium/.add/")){
+        string relPath = getCurrentPath(childdir.path(), root + "/.imperium/.add");
+        allStaged[relPath] = 1;
+    }
+}
+
+void removeAllStaged()
+{
+    fs::remove_all(root + "/.imperium/.add");
+    allStaged.clear();
+    fstream fout;
+    fout.open((root + "/.imperium/add.log").c_str(), fstream::out | fstream::trunc);
+    fout.close();
+}
+
+bool checkIfDeleted(string path)
+{
+    if (allStaged[path])
+        return false;
+    return true;
+}
+
+void addPrevCommit(string prevCommitHash, string commitHash)
+{
+    string path = root + "/.imperium/.commit/" + prevCommitHash;
+    for (auto &childdir : fs::recursive_directory_iterator(path + "/")){
+        string relPath = "/" + getCurrentPath(childdir.path(), path);
+        if (!checkIfDeleted(relPath)){
+            if (checkDirType(childdir.path()) == "directory"){
+                if (checkDirType(root + "/.imperium/.commit/" + commitHash + relPath) != "directory")
+                    fs::create_directories(root + "/.imperium/.commit/" + commitHash + relPath);
+            }
+            else if (checkDirType(childdir.path()) == "file"){
+                fs::path file_path = root + "/.imperium/.commit/" + commitHash + relPath;
+                fs::create_directories(file_path.parent_path());
+                fs::copy_file(childdir.path(), file_path, fs::copy_options::overwrite_existing);
+            }
+        }
+    }
+}
+
+void addCommit(string commitHash)
+{
+    string path = root + "/.imperium/.add";
+    for (auto &childdir : fs::recursive_directory_iterator(path + "/")){
+        string relPath = "/" + getCurrentPath(childdir.path(), path);
+        if (checkDirType(childdir.path()) == "directory"){
+            if (checkDirType(root + "/.imperium/.commit/" + commitHash + relPath) != "directory")
+                fs::create_directories(root + "/.imperium/.commit/" + commitHash + relPath);
+        }
+        else if (checkDirType(childdir.path()) == "file"){
+            fs::path file_path = root + "/.imperium/.commit/" + commitHash + relPath;
+            fs::create_directories(file_path.parent_path());
+            fs::copy_file(childdir.path(), file_path, fs::copy_options::overwrite_existing);
+        }
+    }
+}
+
+void updateCommitLog(string commitHash, string message)
+{
+    fstream fout((root + "/.imperium/commit.log").c_str(), fstream::app);
+    fout << "commit " << commitHash << " -- " << message << endl;
+    fout.close();
+}
+
+void commit(string message)
+{
+    if (!initDone()){
+        cout << "ERROR. Repository not initialized properly.\n";
+        cout << "Try \"imperium init\".\n";
+        return;
+    }
+    if (!addDone()){
+        cout << "ERROR. Nothing to commit.\n";
+        cout << "Try \"imperium add <path>\".\n";
+        return;
+    }
+    string commitHash = generateCommitHash(), prevCommitHash = "", temp_hash = "";
+    ifstream fin((root + "/.imperium/commit.log").c_str());
+    while (getline(fin, temp_hash)){
+        prevCommitHash = temp_hash.substr(7, 40);
+    }
+    fin.close();
+
+    fs::create_directories(root + "/.imperium/.commit/" + commitHash);
+    generateAllStaged();
+    if (prevCommitHash != ""){
+        addPrevCommit(prevCommitHash, commitHash);
+    }
+    addCommit(commitHash);
+    updateCommitLog(commitHash, message);
+    removeAllStaged();
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 
 int main(int argc, char** argv){
 
@@ -212,7 +365,20 @@ int main(int argc, char** argv){
             cout << "Please specify a proper path.\n";
         }
     }
+    else if (strcmp(argv[1], "commit") == 0){
+        if (argc < 3 || argv[2] == ""){
+            cout << "Please add a proper commit message.\n";
+        }
+        else{
+            string message = "";
+            for (int i = 2; i < argc; ++i){
+                message += argv[i];
+                if (i != argc - 1)
+                    message += " ";
+            }
+            commit(message);
+        }
+    }
 
     return 0;
-
 }
