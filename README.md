@@ -13,7 +13,7 @@ I have also created a Imperium function which ensures that everytime we don't ha
 ## USING IMPERIUM
 
 
-### &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; :IMPERIUM COMMANDS:
+### -:   IMPERIUM COMMANDS   :-
 
 > imperium - Get the Commands List.
 
